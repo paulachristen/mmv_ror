@@ -1,0 +1,617 @@
+---
+title: "Return on Investment Analysis"
+output: html_document
+date: "2025-01-15"
+---
+
+```{r setup, include=FALSE}
+rm()
+options(scipen=999)
+
+library(writexl)
+library(readxl)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(janitor)
+library(naniar)
+library(data.table)
+library(fs)
+library(jrvFinance)
+library(freedom)
+library(ggrepel)  # For better text labeling
+library(viridis)
+# Source other R files
+source("./script/functions.R")
+source("./script/load_files.R")
+source("./script/irr_analysis.R")
+source("./script/aggregation.R")
+source("./script/yvsl_calc.R")
+```
+
+
+```{r cars}
+
+non_spec_check <- data.frame()
+
+##########load universal files
+
+#list all xlsx files
+xlsx_files <- list.files(path = "./data/universal", pattern = "\\.xlsx$", full.names = TRUE)
+
+#read in each xlsx file
+for (i in xlsx_files) {
+  filename <- basename(i)        # Get filename with extension (e.g., "data.xlsx")
+  filename <- tools::file_path_sans_ext(filename)
+  assign(filename, read_excel(i))     # Create variable dynamically
+}
+
+#create list of dataframes
+data_frames <- Filter(function(x) is(x, "data.frame"), mget(ls()))
+
+#clean names in dataframes
+result <- lapply(data_frames, clean_names)
+
+#for each dataframe assign the name of the file
+for (i in seq_along(data_frames)) {
+  df_name <- names(data_frames)[i]  # Get the original data frame name
+  assign(df_name, result[[i]])       # Assign the cleaned version
+}
+
+```
+
+
+```{r}
+## Treatment Costs ##
+
+# Merge treatment costs with inflation rates (keep all treatment cost entries)
+treatment_costs <- merge(treatment_costs, inflation_rates, by = "year", all.x = TRUE)
+
+# Merge treatment costs with country names and their regions (keep all treatment cost entries)
+treatment_costs <- merge(treatment_costs, countries_regions, by.x = "country_teritorry", by.y = "name", all.x = TRUE)
+
+# Create flags to identify if data entry is at the region or sub-region level
+treatment_costs$region_check    <- ifelse(treatment_costs$region == treatment_costs$country_teritorry, 1, 0)
+treatment_costs$sub_region_check <- ifelse(treatment_costs$sub_region == treatment_costs$country_teritorry, 1, 0)
+
+# Set 'country_teritorry' to NA if the entry is for a region or sub-region
+#treatment_costs$country_teritorry <- ifelse(treatment_costs$region_check == 1 | 
+#                                              treatment_costs$sub_region_check == 1,
+#                                            NA, treatment_costs$country_teritorry)
+
+# Calculate inflation-adjusted unit cost in 2023 USD
+treatment_costs$unit_cost_usd_2023_price_inflated <- treatment_costs$unit_cost_usd_2023_price * (treatment_costs$inflation_rate)
+
+# Aggregate: Count treatment cost observations by country/territory, category, and year
+count_data_treatment_costs <- treatment_costs %>%
+  dplyr::group_by(country_teritorry, ref_category, year) %>%
+  dplyr::summarize(n_t_cost = n())
+
+# Merge the count data back into the main treatment cost dataset
+treatment_costs <- merge(treatment_costs, count_data_treatment_costs,
+                         by = c("country_teritorry", "year", "ref_category"), all.x = TRUE)
+
+```
+
+
+```{r}
+## RDT Costs ##
+
+# Merge RDT costs with inflation rates (keep all RDT cost entries)
+procurement_rdt <- merge(procurement_rdt, inflation_rates, by = "year", all.x = TRUE)
+
+# Calculate inflation-adjusted RDT unit cost in 2023 USD
+procurement_rdt$rdt_price_usd_2023_price_inflated <- procurement_rdt$unit_cost_usd_in_2023_prices * (procurement_rdt$inflation_rate)
+
+# Aggregate: Count RDT observations by country and year
+count_data_procurement_rdt <- procurement_rdt %>%
+  dplyr::group_by(country, year) %>%
+  dplyr::summarize(n_rdt = n())
+
+# Merge the count data back into the main RDT cost dataset
+procurement_rdt <- merge(procurement_rdt, count_data_procurement_rdt,
+                         by = c("country", "year"), all.x = TRUE)
+
+# Merge RDT costs with country names and their regions (keep all RDT cost entries)
+procurement_rdt <- merge(procurement_rdt, countries_regions,
+                         by.x = "country", by.y = "name", all.x = TRUE)
+
+```
+
+
+```{r}
+## Malaria Burden Data Preparation ##
+
+global_malaria_burden <- global_malaria_burden %>%
+  group_by(country) %>%
+  fill(code, .direction = "downup") # Fills both downward and upward
+
+# Merge global malaria burden data with country names and regions, and mark as "global_burden"
+global_malaria_burden <- merge(global_malaria_burden, countries_regions, by = "code", all.x = TRUE)
+global_malaria_burden$cover <- "global_burden"
+
+global_malaria_burden_Africa <- subset(global_malaria_burden, region == "Africa")
+global_malaria_burden_Africa$cover <- "Africa"
+
+# Merge non-Africa malaria burden data with country names and regions, and mark as "nonAfrica"
+global_malaria_burden_nonAfrica <- subset(global_malaria_burden, region != "Africa")
+global_malaria_burden_nonAfrica$cover <- "nonAfrica"
+
+# Combine all three malaria burden datasets into a single dataframe
+malaria_burden <<- rbind(global_malaria_burden, global_malaria_burden_Africa, global_malaria_burden_nonAfrica)
+
+malaria_burden <- malaria_burden %>%
+  group_by(cover, year) %>%                             # Group by cover and year
+  arrange(desc(cases_point), .by_group = TRUE) %>%      # Arrange within each group
+  mutate(distribution = cases_point / sum(cases_point)) %>% # Compute distribution
+  slice_max(order_by = distribution, n = 15) %>%        # Select top 15 based on distribution
+  ungroup()
+```
+
+
+
+
+```{r}
+
+
+income_classification_long <- income_classification %>%
+  pivot_longer(cols = - c("code"),  # Columns to pivot (excluding ID)
+               names_to = "year",  # New column for month names
+               values_to = "inc_class") # New column for values
+
+income_classification_long$year <- as.numeric(gsub("x", "", income_classification_long$year))
+
+income_classification_long$inc_class <- ifelse(income_classification_long$inc_class == "..", NA, income_classification_long$inc_class)
+
+# Fill missing values using the previous year's data
+income_classification_long <- income_classification_long %>%
+  arrange(code, year) %>% # Ensure correct order
+  group_by(code) %>% # Group by country
+  fill(inc_class, .direction = "down") # Fill missing values with previous year
+
+
+##########
+gdp_per_capita <- read.csv("data/universal/gdp_per_capita_ppp.csv")
+
+gdp_per_capita_long <- gdp_per_capita %>%
+  pivot_longer(cols = - c("code"),  # Columns to pivot (excluding ID)
+               names_to = "year",  # New column for month names
+               values_to = "gdp_per_capita") # New column for values
+
+gdp_per_capita_long$year <- as.numeric(gsub("X", "", gdp_per_capita_long$year))
+
+# Fill missing values using the previous year's data
+gdp_per_capita_long <- gdp_per_capita_long %>%
+  arrange(code, year) %>% # Ensure correct order
+  group_by(code) %>% # Group by country
+  fill(gdp_per_capita, .direction = "down") # Fill missing values with previous year
+
+
+#########merge income with gdp per capita info
+df <- income_classification_long %>%
+  left_join(gdp_per_capita_long, by = c("code", "year"))
+
+df$daly <- VSLY
+dalys_priced <- df
+```
+
+
+```{r}
+################
+#WHO CHOICE PRICES (original 2010 prices)
+################
+# Extract 2010 inflation rate
+inflation_rate_2010 <- inflation_rates %>% 
+  filter(year == "2010") %>% 
+  pull(inflation_rate)
+
+# Convert columns 3 through 7 to numeric and merge region information
+who_choice_prices <- who_choice_prices %>%
+  mutate(across(3:7, as.numeric)) %>%
+  left_join(countries_regions, by = c("region_country" = "name"))
+
+# Define inflation adjustment factor
+inflation_adjustment <- (1.03^(2023 - 2010)) * inflation_rate_2010
+
+# Adjust financial values for inflation and discounting
+adjust_cols <- c("model_prediction", "mean_value_from_sample", 
+                 "high_95_unc_interval", "low_95_unc_interval", "sd")
+
+who_choice_prices <- who_choice_prices %>%
+  mutate(across(all_of(adjust_cols), ~ as.numeric(.) * inflation_adjustment))
+
+who_choice_prices$region <- ifelse(is.na(who_choice_prices$region),who_choice_prices$region_country, who_choice_prices$region)
+who_choice_prices$sub_region <- ifelse(is.na(who_choice_prices$sub_region),who_choice_prices$region_country, who_choice_prices$sub_region)
+who_choice_prices$code <- ifelse(is.na(who_choice_prices$code),who_choice_prices$region_country, who_choice_prices$code)
+```
+
+```{r pressure, echo=FALSE}
+# Get a list of unique treatment codes
+treatment_codes <- unique(mmv_calculations_dalys$treatment)
+
+# Function to determine malaria burden dataset based on treatment type
+get_malaria_burden <- function(t) {
+  if (t %in% c("ASAQ", "SPAQ", "RAS")) return(malaria_burden %>% filter(cover == "Africa"))
+  if (t %in% c("AS-PYR", "ASMQ")) return(malaria_burden %>% filter(cover == "nonAfrica"))
+  return(malaria_burden %>% filter(cover == "global_burden"))
+}
+
+# Function to calculate cost modes at different geographic levels
+calculate_cost_modes <- function(df, group_vars, value_col, mode_col, min_col, max_col) {
+  df %>%
+    group_by(across(all_of(group_vars))) %>%
+    summarise(
+      !!mode_col := mode_function(!!sym(value_col)),
+      !!min_col := min(!!sym(value_col)),
+      !!max_col := max(!!sym(value_col))
+    )
+}
+
+# Iterate over each treatment code
+for (t in treatment_codes) {
+  
+  m_burden <- get_malaria_burden(t)
+  
+  mmv <- mmv_calculations_dalys %>% filter(treatment == t)
+  treat_costs <- treatment_costs %>% filter(ref_category == t) %>%
+    remove_outlier(unit_cost_usd_2023_price_inflated, 2) %>%
+    ungroup()
+  
+  df <- m_burden %>%
+    select(year, code, distribution) %>%
+    merge(mmv, by = "year", all.x = TRUE) %>%
+    merge(dalys_priced, by = c("code", "year"), all.x = TRUE)
+  
+  # Calculate country-specific DALYs averted & monetized
+  df <- df %>%
+    mutate(
+      dalys_averted_country = dalys_averted * distribution,
+      dalys_monetized = dalys_averted_country * daly,
+      doses_country = doses * distribution
+    )
+  
+  # Treatment Cost Calculations
+  treat_costs_region_modes <- calculate_cost_modes(treat_costs, c("year", "region"), "unit_cost_usd_2023_price_inflated", "mode_region_t", "mini_t_price_region", "maxi_t_price_region")
+  
+  treat_costs_sub_region_modes <- calculate_cost_modes(treat_costs, c("year", "sub_region"), "unit_cost_usd_2023_price_inflated", "mode_sub_region_t", "mini_t_price_sub_region", "maxi_t_price_sub_region")
+  
+  treat_costs_country_modes <- calculate_cost_modes(treat_costs, c("year", "iso3code_country"), "unit_cost_usd_2023_price_inflated", "mode_country_t", "mini_t_price_country", "maxi_t_price_country")
+  names(treat_costs_country_modes)[2] <- c("code")
+  
+  # Merge cost data with df
+  df <- df %>%
+    left_join(countries_regions, by = "code")  %>%
+    left_join(treat_costs_region_modes, by = c("year", "region")) %>%
+    left_join(treat_costs_sub_region_modes, by = c("year", "sub_region")) %>%
+    left_join(treat_costs_country_modes, by = c("year", "code"))
+  
+  # Impute missing treatment costs using a hierarchy
+  df <- df %>%
+    mutate(
+      mode_country_t = coalesce(mode_country_t, mode_sub_region_t, mode_region_t),
+      mini_t_price_country = coalesce(mini_t_price_country, mini_t_price_sub_region, mini_t_price_region),
+      maxi_t_price_country = coalesce(maxi_t_price_country, maxi_t_price_sub_region, maxi_t_price_region)
+    )
+  
+  # RDT Cost Calculations
+  rdt_costs_region_modes <- calculate_cost_modes(procurement_rdt, c("year", "region"), "rdt_price_usd_2023_price_inflated", "mode_region_rdt", "mini_rdt_price_region", "maxi_rdt_price_region")
+  rdt_costs_sub_region_modes <- calculate_cost_modes(procurement_rdt, c("year", "sub_region"), "rdt_price_usd_2023_price_inflated", "mode_sub_region_rdt", "mini_rdt_price_sub_region", "maxi_rdt_price_sub_region")
+  rdt_costs_country_modes <- calculate_cost_modes(procurement_rdt, c("year", "code"), "rdt_price_usd_2023_price_inflated", "mode_country_rdt", "mini_rdt_price_country", "maxi_rdt_price_country")
+  
+df$year <- as.numeric(df$year)
+rdt_costs_region_modes$year <- as.numeric(rdt_costs_region_modes$year)
+rdt_costs_sub_region_modes$year <- as.numeric(rdt_costs_sub_region_modes$year)
+rdt_costs_country_modes$year <- as.numeric(rdt_costs_country_modes$year)
+
+  # Merge RDT costs
+  df <- df %>% 
+    left_join(rdt_costs_region_modes, by = c("year", "region")) %>%
+    left_join(rdt_costs_sub_region_modes, by = c("year", "sub_region")) %>%
+    left_join(rdt_costs_country_modes, by = c("year", "code"))
+  
+  # Impute missing RDT costs using a hierarchy
+  df <- df %>%
+    mutate(
+      mode_country_rdt = coalesce(mode_country_rdt, mode_sub_region_rdt, mode_region_rdt),
+      mini_rdt_price_country = coalesce(mini_rdt_price_country, mini_rdt_price_sub_region, mini_rdt_price_region),
+      maxi_rdt_price_country = coalesce(maxi_rdt_price_country, maxi_rdt_price_sub_region, maxi_rdt_price_region)
+    )
+  
+  # Intervention Costs
+
+  # Intervention Costs for InjAS
+  if(t == "InjAS"){
+    intervention_cost <- who_choice_prices %>%
+      filter(delivery_option != "health_centre_no_beds") %>%
+      group_by(code) %>%
+      summarise(
+        avg_model_pred = mean(model_prediction, na.rm = TRUE),
+        avg_mean_sample = mean(mean_value_from_sample, na.rm = TRUE),
+        avg_high_95 = mean(high_95_unc_interval, na.rm = TRUE),
+        avg_low_95 = mean(low_95_unc_interval, na.rm = TRUE),
+        avg_sd = mean(sd, na.rm = TRUE)
+      )
+  }else{
+      # Intervention Costs assumed for all other treatments
+        intervention_cost <- who_choice_prices %>%
+          filter(delivery_option == "health_centre_no_beds") %>%
+          group_by(code) %>%
+          summarise(
+            avg_model_pred = mean(model_prediction, na.rm = TRUE),
+            avg_mean_sample = mean(mean_value_from_sample, na.rm = TRUE),
+            avg_high_95 = mean(high_95_unc_interval, na.rm = TRUE),
+            avg_low_95 = mean(low_95_unc_interval, na.rm = TRUE),
+            avg_sd = mean(sd, na.rm = TRUE))
+  }
+  
+  df <- df %>%
+    left_join(intervention_cost, by = c("code")) %>%
+    filter(!is.na(treatment)) %>%
+    group_by(year, code) %>%
+    fill(everything(), .direction = "downup") %>%
+    ungroup()
+  
+  # Save output
+  write.csv(df, paste0("./by_treatment_dataset/", t, ".csv"), row.names = FALSE)
+}
+
+```
+
+```{r}
+
+check_df <- data.frame()
+# Initialize empty vector for storing IRR estimates
+irr_estim_vector <- c()
+# Creates an empty numeric vector to store the calculated Internal Rate of Return (IRR) estimates.
+
+# Initialize empty dataframe for storing IRR and BCR estimates and corresponding treatment codes
+irr_estim_df <- data.frame(matrix(data = 0, nrow = 0, ncol = 3))
+new_df <- data.frame()
+# Creates an empty dataframe with two columns. This dataframe will be used to store the calculated IRR estimates and
+# the corresponding treatment codes.
+# Get unique treatment codes from the main dataset
+mmv_calculations_dalys <- read_excel("data/universal/mmv_calculations_dalys.xlsx")
+
+N <- 100
+n<- 1
+# Inner loop: Perform simulations for each DALY column
+for (n in 1:N) {
+    
+    # Initialize dataframe for intermediate results
+    df_meta <- data.frame()
+    df_meta_country <- data.frame()
+    # Innermost loop: Iterate over treatment codes
+    for (t in treatment_codes) {
+      
+      # Read in the preprocessed data for the treatment
+      dataframe <- read.csv(paste0("by_treatment_dataset/",
+                                   t,
+                                   ".csv"))
+      
+      # Extract relevant columns for DALY calculations
+      df_empty <- dataframe[, c("code", "year", "doses_country","dalys_monetized","dalys_averted_country")]
+      names(df_empty)[4] <- "monetized_dalys_averted"
+      
+      # Extract WHO Choice delivery costs data
+      who_choice_psa <- dataframe[, c("code", "year", "avg_low_95",
+                                      "avg_model_pred", "avg_high_95")]
+      
+      # Extract treatment costs data
+      t_psa <- dataframe[, c("code", "year", "mini_t_price_country",
+                             "mode_country_t", "maxi_t_price_country")]
+      t_psa[is.na(t_psa)] <- 0       # Replace NAs in treatment costs with 0
+      t_psa <- t_psa[complete.cases(t_psa), ]  # Remove rows with missing values
+      
+      # Extract RDT costs data
+      rdt_psa <- dataframe[, c("code", "year", "mini_rdt_price_country",
+                               "mode_country_rdt", "maxi_rdt_price_country")]
+      rdt_psa[is.na(rdt_psa)] <- 0      # Replace NAs in RDT costs with 0
+      rdt_psa <- rdt_psa[complete.cases(rdt_psa), ] # Remove rows with missing values
+      
+      # Initialize vectors to store simulated values
+      t_psa_simulated_vector <- c()
+      rdt_psa_simulated_vector <- c()
+      who_choice_psa_simulated_vector <- c()
+      
+      # Simulate costs using PERT distribution
+      for (i in 1:nrow(df_empty)) {
+        who_choice_psa_simulated <- round(freedom::rpert(n = 1, x.min = who_choice_psa[i, 3],
+                                                         x.mode = who_choice_psa[i, 4], x.max = who_choice_psa[i, 5], lambda = 4), 4)
+        t_psa_simulated <- round(freedom::rpert(n = 1, x.min  = t_psa[i, 3],
+                                                x.mode = t_psa[i, 4], x.max = t_psa[i, 5], lambda = 4), 4)
+        rdt_psa_simulated <- round(freedom::rpert(n = 1, x.min = rdt_psa[i, 3],
+                                                  x.mode = rdt_psa[i, 4], x.max = rdt_psa[i, 5], lambda = 4), 4)
+        
+        # Store the simulated values
+        who_choice_psa_simulated_vector <- rbind(who_choice_psa_simulated_vector, who_choice_psa_simulated)
+        t_psa_simulated_vector <- rbind(t_psa_simulated_vector, t_psa_simulated)
+        rdt_psa_simulated_vector <- rbind(rdt_psa_simulated_vector, rdt_psa_simulated)
+      }
+      
+      # Add simulated values to the dataframe
+      df_empty$rdt_psa_simulated <- rdt_psa_simulated_vector
+      df_empty$t_psa_simulated <- t_psa_simulated_vector
+      df_empty$who_choice_simulated <- who_choice_psa_simulated_vector
+      
+      # Calculate health systems costs
+      df_empty$health_systems <- ((df_empty$rdt_psa_simulated * 1.55) +
+                                    (df_empty$t_psa_simulated * 1.8) +
+                                    df_empty$who_choice_simulated) * df_empty$doses_country
+      
+      df_empty$run_id <- n
+      df_empty$treatment <- t
+      
+      # Select relevant columns for further analysis
+      df_add_country <- df_empty[ , which(names(df_empty) %in% c("code","year",
+                                                         "treatment",
+                                                         "run_id",
+                                                         "d",
+                                                         "health_systems",
+                                                         "dalys_averted_country",
+                                                         "monetized_dalys_averted"))]
+      df_meta_country <- rbind(df_meta_country, df_add_country)
+      
+      df_meta_country$health_systems <- ifelse(df_meta_country$health_systems == "NaN", 
+                                       0,
+                                       df_meta_country$health_systems)
+      
+      # Select relevant columns for further analysis
+      df_add <- df_empty[ , which(names(df_empty) %in% c("year",
+                                                         "treatment",
+                                                         "run_id",
+                                                         "d",
+                                                         "health_systems",
+                                                         "monetized_dalys_averted"))]
+      df_meta <- rbind(df_meta, df_add)
+      df_meta$health_systems <- ifelse(df_meta$health_systems == "NaN", 
+                                       0,
+                                       df_meta$health_systems)
+    }
+    
+    # Aggregate costs and DALYs averted by year
+    check <- df_meta %>%
+      dplyr::group_by(year) %>%
+      dplyr::summarise(health_systems_costs = sum(health_systems),
+                       monetized_dalys_averted = sum(monetized_dalys_averted))
+    
+    # Aggregate costs and DALYs averted by year
+    new <- df_meta_country %>%
+      dplyr::group_by(run_id, code) %>%
+      dplyr::summarise(health_systems_costs = sum(health_systems),
+                       monetized_dalys_averted = sum(monetized_dalys_averted), 
+                       dalys_averted = sum(dalys_averted_country))
+    
+    # Merge with MMV investments data
+    check <- merge(check, mmv_investments[, c("year", "in_2023_prices")],
+                   by = "year", all = TRUE)
+    
+    bcr <- sum(check$monetized_dalys_averted, na.rm = TRUE) / (sum(check$health_systems_costs, na.rm = TRUE) + sum(check$in_2023_prices, na.rm = TRUE))
+    
+    check[is.na(check)] <- 0
+    
+    # Calculate cash flow
+    check$cash_flow <- check$monetized_dalys_averted - check$health_systems - check$in_2023_prices
+    
+    check$run_id <- n
+    check_df <<- rbind(check_df, check)
+    
+    non_spec_check <- rbind(non_spec_check, check)
+    # Calculate IRR and store results
+    irr_estim <- jrvFinance::irr(cf = check$cash_flow)
+    
+    irr_estim_df <- rbind(irr_estim_df, c(irr_estim, bcr))
+    new_df <- rbind(new_df,new)
+  }
+
+df_sums <- check_df %>%
+  group_by(run_id) %>%
+  summarise(across(where(is.numeric), sum, na.rm = TRUE))
+
+new_df_average <- new_df %>%
+  group_by(code) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+new_df_average <- merge(new_df_average, countries_regions, 
+      by = "code", all.x = TRUE)
+
+write.csv(new_df_average, "plots/new_df_average.csv", row.names = FALSE)
+
+write.csv(check_df, "plots/by_year_df.csv", row.names = FALSE)
+
+```
+
+```{r}
+ggplot(new_df_average, aes(x = health_systems_costs, y = dalys_averted, label = name, color = sub_region)) +
+  geom_point(alpha = 0.7, size = 3) +  # Use alpha for transparency and size for better visibility
+  geom_text_repel(size = 3) +  # Adds non-overlapping labels
+  scale_x_log10() +  # Log scale for costs
+  scale_y_log10() +  # Log scale for DALYs averted
+  scale_color_viridis(discrete = TRUE) +  # Use Viridis color palette
+  labs(
+    title = "",
+    x = "Health Systems Costs (log scale)",
+    y = "DALYs Averted (log scale)",
+    color = "Sub-region"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",  # Moves legend to bottom
+    legend.direction = "horizontal",  # Sets horizontal orientation
+    legend.box = "horizontal",  # Ensures the legend is in a box
+    legend.spacing.x = unit(0.5, 'cm'),  # Adjusts spacing between items
+    legend.text = element_text(size = 10)  # Adjust text size for clarity
+  ) +
+  guides(color = guide_legend(nrow = 2))  # Splits legend into 2 rows
+
+ggsave("plots/by_country_health_system_to_DALYs_averted.png", width = 10)
+
+write.xlsx(new_df_average, "irr_estimates/by_country_results.xlsx", rowNames = FALSE)
+```
+
+```{r}
+# Assign column names to the IRR estimation dataframe
+names(irr_estim_df) <- c("irr_estimate","bcr_estimate")
+
+# Create a density histogram and density plot of IRR estimates by DALY method
+plot <- ggplot(irr_estim_df, aes(x = as.numeric(bcr_estimate))) +
+  geom_histogram(aes(y = ..density..), bins = 100, alpha = 0.6, position = "identity") +   # Histogram with density on y-axis
+  geom_density(alpha = 0.2) +                                                              # Add density plot on top
+  labs(title = "Density Histogram of BCR",
+       x = "BCR Estimate",
+       y = "Density") +
+  theme_minimal()                                                                           # Use a minimalist theme
+
+# Save the plot to a file
+ggsave(paste0("./irr_estimates/",
+              
+              "bcr_final.png"),
+       width = 10, height = 8)                                                             # Specify plot dimensions
+
+# Convert IRR estimates to numeric format for calculations
+irr_estim_df$irr_estimate <- as.numeric(irr_estim_df$irr_estimate)
+
+# Convert BCR estimates to numeric format for calculations
+irr_estim_df$bcr_estimate <- as.numeric(irr_estim_df$bcr_estimate)
+
+# Perform t-test on all IRR estimates
+overall_t <- t.test(irr_estim_df$irr_estimate)
+
+# Perform t-test on all BCR estimates
+overall_t_bcr <- t.test(irr_estim_df$bcr_estimate)
+
+# Initialize dataframe to store estimates and confidence intervals
+estimates_intervals <- data.frame(matrix(data = 0, nrow = 0, ncol = 5))
+
+# Loop through DALY methods and perform t-tests and store results
+t_test <- t.test(irr_estim_df$irr_estimate)                # Perform t-test
+t_test_bcr <- t.test(irr_estim_df$bcr_estimate)                # Perform t-test
+  
+# Store mean estimate and confidence interval
+estimates_intervals <- rbind(estimates_intervals,
+                               c(mean(irr_estim_df$irr_estimate), t_test$conf.int,
+                                 mean(irr_estim_df$bcr_estimate), t_test_bcr$conf.int))
+
+
+# Set column names for the estimates dataframe
+names(estimates_intervals) <- c("mean", "lower 95% CI", "upper 95% CI",
+                                "mean_bcr", "lower 95% CI bcr", "upper 95% CI bcr")
+
+# Round values in the estimates dataframe
+estimates_intervals$mean <- round(as.numeric(estimates_intervals$mean), 4)
+estimates_intervals$`lower 95% CI` <- round(as.numeric(estimates_intervals$`lower 95% CI`), 4)
+estimates_intervals$`upper 95% CI` <- round(as.numeric(estimates_intervals$`upper 95% CI`), 4)
+
+estimates_intervals$mean_bcr <- round(as.numeric(estimates_intervals$mean_bcr), 4)
+estimates_intervals$`lower 95% CI bcr` <- round(as.numeric(estimates_intervals$`lower 95% CI bcr`), 4)
+estimates_intervals$`upper 95% CI bcr` <- round(as.numeric(estimates_intervals$`upper 95% CI bcr`), 4)
+
+# Write the estimates and confidence intervals to a CSV file
+write.csv(estimates_intervals,
+          paste0("./irr_estimates/",
+                 "irr_final.csv"), row.names = FALSE)
+
+write.csv(new_df,
+          paste0("./irr_estimates/",
+                 "plot_dalys.csv"), row.names = FALSE)
+
+```

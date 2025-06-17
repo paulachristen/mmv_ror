@@ -17,11 +17,14 @@ perform_irr_analysis <- function(p,
 irr_estim_vector <- c()
 # Creates an empty numeric vector to store the calculated Internal Rate of Return (IRR) estimates.
 
-# Initialize empty dataframe for storing IRR estimates and corresponding treatment codes
-irr_estim_df <- data.frame(matrix(data = 0, nrow = 0, ncol = 2))
+# Initialize empty dataframe for storing IRR and BCR estimates and corresponding treatment codes
+irr_estim_df <- data.frame(matrix(data = 0, nrow = 0, ncol = 3))
+new_df <- data.frame()
 # Creates an empty dataframe with two columns. This dataframe will be used to store the calculated IRR estimates and
 # the corresponding treatment codes.
 # Get unique treatment codes from the main dataset
+mmv_calculations_dalys <- read_excel(paste0(paths[p],"/mmv_calculations_dalys.xlsx"))
+
 treatment_codes <- unique(mmv_calculations_dalys$treatment)
 
 # Define the DALY columns for analysis
@@ -37,7 +40,7 @@ for (daly in 1:length(daly_columns)) {
     
     # Initialize dataframe for intermediate results
     df_meta <- data.frame()
-    
+    df_meta_country <- data.frame()
     # Innermost loop: Iterate over treatment codes
     for (t in treatment_codes) {
       
@@ -48,7 +51,7 @@ for (daly in 1:length(daly_columns)) {
                                    ".csv"))
       
       # Extract relevant columns for DALY calculations
-      df_empty <- dataframe[, c("country", "year", "doses_country", column_daly)]
+      df_empty <- dataframe[, c("country", "year", "doses_country",column_daly,"dalys_averted_country")]
       names(df_empty)[4] <- "monetized_dalys_averted"
       
       # Extract WHO Choice delivery costs data
@@ -105,12 +108,26 @@ for (daly in 1:length(daly_columns)) {
       #df_empty <- rbind(df_empty, clean_years) # Combine the simulated data with the empty years
 
       # Create directory if it doesn't exist and save disaggregated results
-      save_dir <- file.path("./disaggregated_results/", t)
-      if (!dir.exists(save_dir)) dir.create(save_dir, recursive = TRUE)
+      #save_dir <- file.path("./disaggregated_results/", t)
+      #if (!dir.exists(save_dir)) dir.create(save_dir, recursive = TRUE)
       
       df_empty$run_id <- n
       df_empty$d <- column_daly
       df_empty$treatment <- t
+      
+      # Select relevant columns for further analysis
+      df_add_country <- df_empty[ , which(names(df_empty) %in% c("country","year",
+                                                         "treatment",
+                                                         "run_id",
+                                                         "d",
+                                                         "health_systems",
+                                                         "dalys_averted_country",
+                                                         "monetized_dalys_averted"))]
+      df_meta_country <- rbind(df_meta_country, df_add_country)
+      
+      df_meta_country$health_systems <- ifelse(df_meta_country$health_systems == "NaN", 
+                                       0,
+                                       df_meta_country$health_systems)
       
       # Select relevant columns for further analysis
       df_add <- df_empty[ , which(names(df_empty) %in% c("year",
@@ -120,6 +137,9 @@ for (daly in 1:length(daly_columns)) {
                                                          "health_systems",
                                                          "monetized_dalys_averted"))]
       df_meta <- rbind(df_meta, df_add)
+      df_meta$health_systems <- ifelse(df_meta$health_systems == "NaN", 
+                                       0,
+                                       df_meta$health_systems)
     }
     
     # Aggregate costs and DALYs averted by year
@@ -128,14 +148,23 @@ for (daly in 1:length(daly_columns)) {
       dplyr::summarise(health_systems_costs = sum(health_systems),
                        monetized_dalys_averted = sum(monetized_dalys_averted))
     
+    # Aggregate costs and DALYs averted by year
+    new <- df_meta_country %>%
+      dplyr::group_by(country,year) %>%
+      dplyr::summarise(health_systems_costs = sum(health_systems),
+                       monetized_dalys_averted = sum(monetized_dalys_averted), 
+                       dalys_averted = sum(dalys_averted_country))
+    
     # Merge with MMV investments data
-    check <- merge(check, mmv_investments[, c("year", "in_2022_prices")],
+    check <- merge(check, mmv_investments[, c("year", "in_2023_prices")],
                    by = "year", all = TRUE)
+    
+    bcr <- sum(check$monetized_dalys_averted, na.rm = TRUE) / (sum(check$health_systems_costs, na.rm = TRUE) + sum(check$in_2023_prices, na.rm = TRUE))
     
     check[is.na(check)] <- 0
     
     # Calculate cash flow
-    check$cash_flow <- check$monetized_dalys_averted - check$health_systems - check$in_2022_prices
+    check$cash_flow <- check$monetized_dalys_averted - check$health_systems - check$in_2023_prices
     
     check$method <- column_daly
     scenario <- gsub("files for R ", "", tail(strsplit(paths[p], "/")[[1]], 1))
@@ -146,12 +175,14 @@ for (daly in 1:length(daly_columns)) {
     non_spec_check <- rbind(non_spec_check, check)
     # Calculate IRR and store results
     irr_estim <- jrvFinance::irr(cf = check$cash_flow)
-    irr_estim_df <- rbind(irr_estim_df, c(column_daly, irr_estim))
+    
+    irr_estim_df <- rbind(irr_estim_df, c(column_daly, irr_estim, bcr))
+    new_df <- rbind(new_df,new)
   }
 }
 
 # Assign column names to the IRR estimation dataframe
-names(irr_estim_df) <- c("daly_method", "irr_estimate")
+names(irr_estim_df) <- c("daly_method", "irr_estimate","bcr_estimate")
 
 # Replace DALY column names with more readable labels
 irr_estim_df$daly_method <- ifelse(irr_estim_df$daly_method == "dalys_monetized_1", "DALY 1",
@@ -163,7 +194,7 @@ irr_estim_df$daly_method <- ifelse(irr_estim_df$daly_method == "dalys_monetized_
 
 
 # Create a density histogram and density plot of IRR estimates by DALY method
-plot <- ggplot(irr_estim_df, aes(x = as.numeric(irr_estimate))) +
+plot <- ggplot(irr_estim_df, aes(x = as.numeric(bcr_estimate))) +
   geom_histogram(aes(y = ..density..), bins = 100, alpha = 0.6, position = "identity") +   # Histogram with density on y-axis
   geom_density(alpha = 0.2) +                                                              # Add density plot on top
   labs(title = "Density Histogram of IRR Estimates by method of estimating DALYs",
@@ -181,38 +212,45 @@ ggsave(paste0("./irr_estimates/",
 # Convert IRR estimates to numeric format for calculations
 irr_estim_df$irr_estimate <- as.numeric(irr_estim_df$irr_estimate)
 
+# Convert BCR estimates to numeric format for calculations
+irr_estim_df$bcr_estimate <- as.numeric(irr_estim_df$bcr_estimate)
+
 # Perform t-test on all IRR estimates
 overall_t <- t.test(irr_estim_df$irr_estimate)
+
+# Perform t-test on all BCR estimates
+overall_t_bcr <- t.test(irr_estim_df$bcr_estimate)
 
 # Get unique DALY methods for further analysis
 methods <- unique(irr_estim_df$daly_method)
 
 # Initialize dataframe to store estimates and confidence intervals
-estimates_intervals <- data.frame(matrix(data = 0, nrow = 0, ncol = 4))
+estimates_intervals <- data.frame(matrix(data = 0, nrow = 0, ncol = 5))
 
 # Loop through DALY methods and perform t-tests and store results
 for (m in methods) {
   df_temp <- irr_estim_df %>% filter(daly_method == m) # Filter for specific method
   t_test <- t.test(df_temp$irr_estimate)                # Perform t-test
+  t_test_bcr <- t.test(df_temp$bcr_estimate)                # Perform t-test
   
   # Store mean estimate and confidence interval
   estimates_intervals <- rbind(estimates_intervals,
-                               c(m, mean(df_temp$irr_estimate), t_test$conf.int))
+                               c(m, mean(df_temp$irr_estimate), t_test$conf.int,
+                                 mean(df_temp$bcr_estimate), t_test_bcr$conf.int))
 }
 
 # Set column names for the estimates dataframe
-names(estimates_intervals) <- c("method", "mean", "lower 95% CI", "upper 95% CI")
+names(estimates_intervals) <- c("method", "mean", "lower 95% CI", "upper 95% CI",
+                                "mean_bcr", "lower 95% CI bcr", "upper 95% CI bcr")
 
 # Round values in the estimates dataframe
 estimates_intervals$mean <- round(as.numeric(estimates_intervals$mean), 4)
 estimates_intervals$`lower 95% CI` <- round(as.numeric(estimates_intervals$`lower 95% CI`), 4)
 estimates_intervals$`upper 95% CI` <- round(as.numeric(estimates_intervals$`upper 95% CI`), 4)
 
-# Add overall IRR estimate and CI to the estimates dataframe
-estimates_intervals <- rbind(c("overall",
-                               round(mean(irr_estim_df$irr_estimate), 4),
-                               round(overall_t$conf.int,4)),
-                             estimates_intervals)
+estimates_intervals$mean_bcr <- round(as.numeric(estimates_intervals$mean_bcr), 4)
+estimates_intervals$`lower 95% CI bcr` <- round(as.numeric(estimates_intervals$`lower 95% CI bcr`), 4)
+estimates_intervals$`upper 95% CI bcr` <- round(as.numeric(estimates_intervals$`upper 95% CI bcr`), 4)
 
 # Write the estimates and confidence intervals to a CSV file
 write.csv(estimates_intervals,
@@ -220,10 +258,15 @@ write.csv(estimates_intervals,
                  tail(strsplit(paths[p], "/")[[1]], 1),
                  "_irr_final.csv"), row.names = FALSE)
 
-# Write the estimates and confidence intervals to a CSV file
-write.csv(non_spec_check,
-          paste0("./irr_estimates/disaggregated results/",
+write.csv(new_df,
+          paste0("./irr_estimates/",
                  tail(strsplit(paths[p], "/")[[1]], 1),
-                 "irr_estimates_over_time.csv"), row.names = FALSE)
+                 "plot_dalys.csv"), row.names = FALSE)
+
+# Write the estimates and confidence intervals to a CSV file
+#write.csv(non_spec_check,
+#          paste0("./irr_estimates/disaggregated results/",
+#                 tail(strsplit(paths[p], "/")[[1]], 1),
+#                 "irr_estimates_over_time.csv"), row.names = FALSE)
 
 }

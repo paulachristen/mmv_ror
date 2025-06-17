@@ -18,10 +18,7 @@ library(freedom)
 
 # Set file paths and global variables
 #file paths - each folder has equivalent files with the difference of estimated averted DALYs and doses
-paths <- c("./data/files for R Relative_All AL disp",
-           "./data/files for R Absolute All AL disp",
-           "./data/files for R Relative Coartem disp only",
-           "./data/files for R Absolute Coartem disp only")
+paths <- c("./data/files for R Relative Coartem disp only")
 
 # Source other R files
 source("./script/functions.R")
@@ -30,19 +27,17 @@ source("./script/irr_analysis.R")
 source("./script/aggregation.R")
 
 # Set number of iterations
-N <- 10
+N <- 1000
 
 # Create an empty dataframe to store final results
 check_df <- data.frame() 
+p <- 1 #Relative Coartem disp only
 
-# Loop through each path
-for (p in 1:length(paths)) { 
-  
   # Load and pre-process data for the current path
-  df_for_irr <- load_and_preprocess_data(p) 
+df_for_irr <- load_and_preprocess_data(p) 
 
-  # Perform IRR analysis for the current path
-  perform_irr_analysis(p, 
+# Perform IRR analysis for the current path
+perform_irr_analysis(p, 
                        mmv_calculations_dalys = df_for_irr[[1]], 
                        treatment_costs = df_for_irr[[2]], 
                        ochalek_dalys_priced = df_for_irr[[3]], 
@@ -53,8 +48,7 @@ for (p in 1:length(paths)) {
                        who_choice_prices = df_for_irr[[8]], 
                        mmv_investments = df_for_irr[[9]], 
                        non_spec_check = df_for_irr[[10]]) 
-  
-}
+
 
 # Aggregate and save the final results
 aggregate_and_save_results(check_df) 

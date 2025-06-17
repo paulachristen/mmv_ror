@@ -1,8 +1,3 @@
-
-
-
-
-
 #function to calculate mode
 mode_function <- function(x) unique(x)[which.max(tabulate(match(x, unique(x))))] 
 
@@ -12,16 +7,16 @@ remove_outlier <- function(df, var, n) {
   df %>% filter(abs(!!var - mean(!!var, na.rm = TRUE)) <= n * sd(!!var, na.rm = TRUE))
 }
 
-
-model_per_treatment <- function(t, 
+model_per_treatment <- function(t = code, 
                                 mmv_calculations_dalys, 
                                 treatment_costs, 
-                                ochalek_dalys_priced, 
+                                dalys_priced, 
                                 countries_regions, 
-                                ochalek_dalys_priced_missing_placeholders, 
-                                ochalek_dalys_priced_missing_placeholders_region, 
+                                dalys_priced_missing_placeholders, 
+                                dalys_priced_missing_placeholders_region, 
                                 procurement_rdt, 
                                 who_choice_prices){
+
   
   # Print the current treatment name
   print(paste0("Beginning with run:",t))
@@ -48,9 +43,9 @@ model_per_treatment <- function(t,
   df <- merge(m_burden[, c("year", "country", "distribution")], mmv, by = "year", all.x = TRUE)  # Merge based on the 'year' column, keeping all rows from 'm_burden'
   
   # Merge the main dataframe (df) with DALY data by country
-  df <- merge(df, ochalek_dalys_priced, by = c("country","year"), all.x = TRUE)
+  df <- merge(df, dalys_priced, by = c("country","year"), all.x = TRUE)
   # This combines data from the `df` dataframe (which contains information related to the treatment and malaria burden)
-  # with DALY estimates from the `ochalek_dalys_priced` dataset,
+  # with DALY estimates from the `dalys_priced` dataset,
   # matching based on the 'country' column. It keeps all rows from the 'df' dataset.
   
   # Add regional estimated DALY if country-specific data is unavailable
@@ -59,8 +54,8 @@ model_per_treatment <- function(t,
   # to get regional information for each country, using the 'country' column in `df_temp`
   # and the 'name' column in `countries_regions`.  It keeps all rows from `df_temp`.
   
-  df_temp <- merge(df_temp, ochalek_dalys_priced_missing_placeholders, by = c("sub_region","year"), all.x = T)
-  # This further merges `df_temp` with the `ochalek_dalys_priced_missing_placeholders` dataset,
+  df_temp <- merge(df_temp, dalys_priced_missing_placeholders, by = c("sub_region","year"), all.x = T)
+  # This further merges `df_temp` with the `dalys_priced_missing_placeholders` dataset,
   # which likely contains pre-calculated average DALY values for sub-regions, using the 'sub_region' column.
   # It keeps all rows from `df_temp`.
   
@@ -69,8 +64,8 @@ model_per_treatment <- function(t,
   df_temp$daly <- ifelse(is.na(df_temp$daly), df_temp$daly_sub_region, df_temp$daly)
   
   # Merge with regional DALY estimates
-  new <- merge(df_temp, ochalek_dalys_priced_missing_placeholders_region, by = c("region","year"), all.x = T)
-  # This merges `df_temp` with `ochalek_dalys_priced_missing_placeholders_region` (which contains average DALYs for regions),
+  new <- merge(df_temp, dalys_priced_missing_placeholders_region, by = c("region","year"), all.x = T)
+  # This merges `df_temp` with `dalys_priced_missing_placeholders_region` (which contains average DALYs for regions),
   # using the 'region' column. It keeps all rows from `df_temp`.
   
   # Impute missing DALY values at the region level if sub-region level data is not available
@@ -108,13 +103,13 @@ model_per_treatment <- function(t,
   # TREATMENT COSTS
   #-------------------
   
-  # Remove outliers in treatment cost data (presumably based on the 'unit_cost_usd_2022_price_inflated' column)
+  # Remove outliers in treatment cost data (presumably based on the 'unit_cost_usd_2023_price_inflated' column)
   treat_costs <- treat_costs %>%
-    remove_outlier(unit_cost_usd_2022_price_inflated, 2) %>%  # Remove outliers beyond 2 standard deviations from the mean
+    remove_outlier(unit_cost_usd_2023_price_inflated, 2) %>%  # Remove outliers beyond 2 standard deviations from the mean
     ungroup()                                             # Remove any previous grouping from the 'treat_costs' data
   
   # Prepare a subset of treatment costs for region-level analysis
-  treat_costs_region <- treat_costs[, c("year", "region", "n_t_cost", "unit_cost_usd_2022_price_inflated")]
+  treat_costs_region <- treat_costs[, c("year", "region", "n_t_cost", "unit_cost_usd_2023_price_inflated")]
   # Select relevant columns for region-level analysis: year, region, number of treatment costs (`n_t_cost`), and the cost per unit
   treat_costs_region <- treat_costs_region[complete.cases(treat_costs_region), ]
   # Remove any rows with missing values in the selected columns
@@ -128,13 +123,13 @@ model_per_treatment <- function(t,
     # Calculate mode, minimum, and maximum treatment costs per region and year
     treat_costs_region_modes <- treat_costs_region %>%
       dplyr::group_by(year, region) %>%                                  # Group data by year and region
-      dplyr::summarise(mode_region_t = mode_function(unit_cost_usd_2022_price_inflated),  # Calculate mode of 'unit_cost_usd_2022_price_inflated'
-                       mini_t_price_region = min(unit_cost_usd_2022_price_inflated),     # Calculate minimum of 'unit_cost_usd_2022_price_inflated'
-                       maxi_t_price_region = max(unit_cost_usd_2022_price_inflated))     # Calculate maximum of 'unit_cost_usd_2022_price_inflated'
+      dplyr::summarise(mode_region_t = mode_function(unit_cost_usd_2023_price_inflated),  # Calculate mode of 'unit_cost_usd_2023_price_inflated'
+                       mini_t_price_region = min(unit_cost_usd_2023_price_inflated),     # Calculate minimum of 'unit_cost_usd_2023_price_inflated'
+                       maxi_t_price_region = max(unit_cost_usd_2023_price_inflated))     # Calculate maximum of 'unit_cost_usd_2023_price_inflated'
   }
   
   # Calculate min/max/mode treatment cost for sub-region and year
-  treat_costs_sub_region <- treat_costs[, c("year", "sub_region", "unit_cost_usd_2022_price_inflated")]
+  treat_costs_sub_region <- treat_costs[, c("year", "sub_region", "unit_cost_usd_2023_price_inflated")]
   treat_costs_sub_region <- treat_costs_sub_region[complete.cases(treat_costs_sub_region), ] # Filter out rows with missing values
   
   # If there are no rows in the 'treat_costs_sub_region' dataset...
@@ -144,13 +139,13 @@ model_per_treatment <- function(t,
     # Calculate mode, minimum, and maximum treatment costs per sub-region and year
     treat_costs_sub_region_modes <- treat_costs_sub_region %>%
       dplyr::group_by(year, sub_region) %>%                                # Group data by year and sub-region
-      dplyr::summarise(mode_sub_region_t = mode_function(unit_cost_usd_2022_price_inflated),  # Calculate mode of 'unit_cost_usd_2022_price_inflated'
-                       mini_t_price_sub_region = min(unit_cost_usd_2022_price_inflated),     # Calculate minimum of 'unit_cost_usd_2022_price_inflated'
-                       maxi_t_price_sub_region = max(unit_cost_usd_2022_price_inflated))     # Calculate maximum of 'unit_cost_usd_2022_price_inflated'
+      dplyr::summarise(mode_sub_region_t = mode_function(unit_cost_usd_2023_price_inflated),  # Calculate mode of 'unit_cost_usd_2023_price_inflated'
+                       mini_t_price_sub_region = min(unit_cost_usd_2023_price_inflated),     # Calculate minimum of 'unit_cost_usd_2023_price_inflated'
+                       maxi_t_price_sub_region = max(unit_cost_usd_2023_price_inflated))     # Calculate maximum of 'unit_cost_usd_2023_price_inflated'
   }
   
   # Calculate min/max/mode treatment cost for country and year
-  treat_costs_country_teritorry <- treat_costs[, c("year", "country_teritorry", "n_t_cost", "unit_cost_usd_2022_price_inflated")]
+  treat_costs_country_teritorry <- treat_costs[, c("year", "country_teritorry", "n_t_cost", "unit_cost_usd_2023_price_inflated")]
   
   # Merge with country/region information
   treat_costs_country_teritorry <- merge(treat_costs_country_teritorry, countries_regions,
@@ -175,9 +170,9 @@ model_per_treatment <- function(t,
     treat_costs_country_teritorry_modes <- treat_costs_country_teritorry %>%
       dplyr::group_by(year, country_teritorry, n_t_cost) %>%   # Group by year, country, and number of treatment costs
       dplyr::summarise(                                      # Summarize the data within each group
-        mode_country_t = mode_function(unit_cost_usd_2022_price_inflated),  # Calculate mode of treatment cost
-        mini_t_price_country = min(unit_cost_usd_2022_price_inflated),       # Calculate minimum treatment cost
-        maxi_t_price_country = max(unit_cost_usd_2022_price_inflated)        # Calculate maximum treatment cost
+        mode_country_t = mode_function(unit_cost_usd_2023_price_inflated),  # Calculate mode of treatment cost
+        mini_t_price_country = min(unit_cost_usd_2023_price_inflated),       # Calculate minimum treatment cost
+        maxi_t_price_country = max(unit_cost_usd_2023_price_inflated)        # Calculate maximum treatment cost
       )
     
     # Merge with country/region information
@@ -258,9 +253,9 @@ model_per_treatment <- function(t,
   treat_costs_region_modes_global <- treat_costs_country_teritorry %>%
     dplyr::group_by(year) %>%                                       # Group data by year
     dplyr::summarise(                                               # Summarize within each year
-      mode_global_t = mode_function(unit_cost_usd_2022_price_inflated), # Calculate the mode of treatment cost
-      mini_t_price_global = min(unit_cost_usd_2022_price_inflated),       # Calculate the minimum treatment cost
-      maxi_t_price_global = max(unit_cost_usd_2022_price_inflated)        # Calculate the maximum treatment cost
+      mode_global_t = mode_function(unit_cost_usd_2023_price_inflated), # Calculate the mode of treatment cost
+      mini_t_price_global = min(unit_cost_usd_2023_price_inflated),       # Calculate the minimum treatment cost
+      maxi_t_price_global = max(unit_cost_usd_2023_price_inflated)        # Calculate the maximum treatment cost
     )
   
   # Merge global treatment cost modes into the main dataframe
@@ -321,11 +316,11 @@ model_per_treatment <- function(t,
   
   # Remove outliers in RDT procurement data
   procurement_rdt <- procurement_rdt %>%
-    remove_outlier(rdt_price_usd_2022_price_inflated, 2) %>%    # Remove outliers beyond 2 standard deviations in the inflated price
+    remove_outlier(rdt_price_usd_2023_price_inflated, 2) %>%    # Remove outliers beyond 2 standard deviations in the inflated price
     ungroup()                                                  # Remove any previous grouping from the dataframe
   
   # Calculate min/max/mode RDT cost for each region and year
-  rdt_costs_region <- procurement_rdt[, c("year", "region", "rdt_price_usd_2022_price_inflated")]
+  rdt_costs_region <- procurement_rdt[, c("year", "region", "rdt_price_usd_2023_price_inflated")]
   # Create a subset of the data with only the relevant columns (year, region, and inflated price)
   rdt_costs_region <- rdt_costs_region[complete.cases(rdt_costs_region), ]
   # Remove rows with missing values (NA) in the subset
@@ -339,14 +334,14 @@ model_per_treatment <- function(t,
     rdt_costs_region_modes <- rdt_costs_region %>%
       dplyr::group_by(year, region) %>%                                  # Group data by year and region
       dplyr::summarise(                                              # Summarize within each group
-        mode_region_rdt = mode_function(rdt_price_usd_2022_price_inflated), # Calculate the mode of the RDT price
-        mini_rdt_price_region = min(rdt_price_usd_2022_price_inflated),     # Calculate the minimum RDT price
-        maxi_rdt_price_region = max(rdt_price_usd_2022_price_inflated)      # Calculate the maximum RDT price
+        mode_region_rdt = mode_function(rdt_price_usd_2023_price_inflated), # Calculate the mode of the RDT price
+        mini_rdt_price_region = min(rdt_price_usd_2023_price_inflated),     # Calculate the minimum RDT price
+        maxi_rdt_price_region = max(rdt_price_usd_2023_price_inflated)      # Calculate the maximum RDT price
       )
   }
   
   # Calculate min/max/mode RDT cost for each sub-region and year
-  rdt_costs_sub_region <- procurement_rdt[, c("year", "sub_region", "rdt_price_usd_2022_price_inflated")]
+  rdt_costs_sub_region <- procurement_rdt[, c("year", "sub_region", "rdt_price_usd_2023_price_inflated")]
   # Create a subset of the data with relevant columns (year, sub-region, and inflated price)
   rdt_costs_sub_region <- rdt_costs_sub_region[complete.cases(rdt_costs_sub_region), ]
   # Remove rows with missing values (NA) in the subset
@@ -359,14 +354,14 @@ model_per_treatment <- function(t,
     rdt_costs_sub_region_modes <- rdt_costs_sub_region %>%
       dplyr::group_by(year, sub_region) %>%                                # Group data by year and sub-region
       dplyr::summarise(                                               # Summarize within each group
-        mode_sub_region_rdt = mode_function(rdt_price_usd_2022_price_inflated), # Calculate the mode of RDT price
-        mini_rdt_price_sub_region = min(rdt_price_usd_2022_price_inflated),     # Calculate the minimum RDT price
-        maxi_rdt_price_sub_region = max(rdt_price_usd_2022_price_inflated)      # Calculate the maximum RDT price
+        mode_sub_region_rdt = mode_function(rdt_price_usd_2023_price_inflated), # Calculate the mode of RDT price
+        mini_rdt_price_sub_region = min(rdt_price_usd_2023_price_inflated),     # Calculate the minimum RDT price
+        maxi_rdt_price_sub_region = max(rdt_price_usd_2023_price_inflated)      # Calculate the maximum RDT price
       )
   }
   
   # Calculate min/max/mode RDT cost for each country and year
-  rdt_costs_country <- procurement_rdt[, c("year", "country", "n_rdt", "rdt_price_usd_2022_price_inflated")]
+  rdt_costs_country <- procurement_rdt[, c("year", "country", "n_rdt", "rdt_price_usd_2023_price_inflated")]
   
   # Check if there are any rows in the country level RDT cost data
   if (nrow(rdt_costs_country) == 0) {
@@ -377,9 +372,9 @@ model_per_treatment <- function(t,
     rdt_costs_country_modes <- rdt_costs_country %>%
       dplyr::group_by(year, country, n_rdt) %>%       # Group data by year, country, and number of RDTs
       dplyr::summarise(                             # Summarize within each group
-        mode_country_rdt = mode_function(rdt_price_usd_2022_price_inflated), # Calculate the mode of RDT price
-        mini_rdt_price_country = min(rdt_price_usd_2022_price_inflated),       # Calculate the minimum RDT price
-        maxi_rdt_price_country = max(rdt_price_usd_2022_price_inflated)        # Calculate the maximum RDT price
+        mode_country_rdt = mode_function(rdt_price_usd_2023_price_inflated), # Calculate the mode of RDT price
+        mini_rdt_price_country = min(rdt_price_usd_2023_price_inflated),       # Calculate the minimum RDT price
+        maxi_rdt_price_country = max(rdt_price_usd_2023_price_inflated)        # Calculate the maximum RDT price
       )
     
     # Merge with country/region information
@@ -454,9 +449,9 @@ model_per_treatment <- function(t,
   rdt_costs_region_modes_global <- rdt_costs_country %>%
     dplyr::group_by(year) %>%                                       # Group data by year
     dplyr::summarise(                                               # Summarize within each year
-      mode_global_rdt = mode_function(rdt_price_usd_2022_price_inflated), # Calculate the mode of RDT price
-      mini_rdt_price_global = min(rdt_price_usd_2022_price_inflated),       # Calculate the minimum RDT price
-      maxi_rdt_price_global = max(rdt_price_usd_2022_price_inflated)        # Calculate the maximum RDT price
+      mode_global_rdt = mode_function(rdt_price_usd_2023_price_inflated), # Calculate the mode of RDT price
+      mini_rdt_price_global = min(rdt_price_usd_2023_price_inflated),       # Calculate the minimum RDT price
+      maxi_rdt_price_global = max(rdt_price_usd_2023_price_inflated)        # Calculate the maximum RDT price
     )
   
   # Merge global RDT cost modes into the main dataframe
@@ -534,6 +529,9 @@ model_per_treatment <- function(t,
     df <- df[ , -which(names(df) %in% c("country_teritorry"))] # Remove the 'region' column
     
   }
+  
+  df <- df %>%
+    filter(!is.na(treatment))
   
   # Impute missing values in RDT cost columns using values from the previous or next year within the same country
   df <- df %>%

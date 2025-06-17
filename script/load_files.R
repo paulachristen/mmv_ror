@@ -56,8 +56,8 @@ treatment_costs$sub_region_check <- ifelse(treatment_costs$sub_region == treatme
 treatment_costs$country_teritorry <- ifelse(treatment_costs$region_check == 1 | treatment_costs$sub_region_check == 1,
                                             NA, treatment_costs$country_teritorry)
 
-# Calculate inflation-adjusted unit cost in 2022 USD
-treatment_costs$unit_cost_usd_2022_price_inflated <- treatment_costs$unit_cost_usd_2022_price * (treatment_costs$inflation_rate)
+# Calculate inflation-adjusted unit cost in 2023 USD
+treatment_costs$unit_cost_usd_2023_price_inflated <- treatment_costs$unit_cost_usd_2023_price * (treatment_costs$inflation_rate)
 
 # Aggregate: Count treatment cost observations by country/territory, category, and year
 count_data_treatment_costs <- treatment_costs %>%
@@ -73,8 +73,8 @@ treatment_costs <- merge(treatment_costs, count_data_treatment_costs,
 # Merge RDT costs with inflation rates (keep all RDT cost entries)
 procurement_rdt <- merge(procurement_rdt, inflation_rates, by = "year", all.x = TRUE)
 
-# Calculate inflation-adjusted RDT unit cost in 2022 USD
-procurement_rdt$rdt_price_usd_2022_price_inflated <- procurement_rdt$unit_cost_usd_in_2022_prices * (procurement_rdt$inflation_rate)
+# Calculate inflation-adjusted RDT unit cost in 2023 USD
+procurement_rdt$rdt_price_usd_2023_price_inflated <- procurement_rdt$unit_cost_usd_in_2023_prices * (procurement_rdt$inflation_rate)
 
 # Aggregate: Count RDT observations by country and year
 count_data_procurement_rdt <- procurement_rdt %>%
@@ -170,11 +170,11 @@ who_choice_prices <- who_choice_prices %>%
 who_choice_prices <- merge(who_choice_prices, countries_regions, by.x = "region_country", by.y = "name", all.x = TRUE)
 
 # Adjust financial values in 'who_choice_prices' for inflation and discounting
-who_choice_prices$model_prediction <- as.numeric(who_choice_prices$model_prediction) * (1.03^(2022 - 2010)) * (inflation_rate_2010)  # Adjust model predictions
-who_choice_prices$mean_value_from_sample <- as.numeric(who_choice_prices$mean_value_from_sample) * (1.03^(2022 - 2010)) * (inflation_rate_2010)  # Adjust mean values
-who_choice_prices$high_95_unc_interval <- as.numeric(who_choice_prices$high_95_unc_interval) * (1.03^(2022 - 2010)) * (inflation_rate_2010)   # Adjust upper 95% uncertainty interval
-who_choice_prices$low_95_unc_interval <- as.numeric(who_choice_prices$low_95_unc_interval) * (1.03^(2022 - 2010)) * (inflation_rate_2010)   # Adjust lower 95% uncertainty interval
-who_choice_prices$sd <- as.numeric(who_choice_prices$sd) * (1.03^(2022 - 2010)) * (inflation_rate_2010)                                      # Adjust standard deviation
+who_choice_prices$model_prediction <- as.numeric(who_choice_prices$model_prediction) * (1.03^(2023 - 2010)) * (inflation_rate_2010)  # Adjust model predictions
+who_choice_prices$mean_value_from_sample <- as.numeric(who_choice_prices$mean_value_from_sample) * (1.03^(2023 - 2010)) * (inflation_rate_2010)  # Adjust mean values
+who_choice_prices$high_95_unc_interval <- as.numeric(who_choice_prices$high_95_unc_interval) * (1.03^(2023 - 2010)) * (inflation_rate_2010)   # Adjust upper 95% uncertainty interval
+who_choice_prices$low_95_unc_interval <- as.numeric(who_choice_prices$low_95_unc_interval) * (1.03^(2023 - 2010)) * (inflation_rate_2010)   # Adjust lower 95% uncertainty interval
+who_choice_prices$sd <- as.numeric(who_choice_prices$sd) * (1.03^(2023 - 2010)) * (inflation_rate_2010)                                      # Adjust standard deviation
 
 # Get a list of unique treatment codes
 treatment_codes <- unique(mmv_calculations_dalys$treatment)
